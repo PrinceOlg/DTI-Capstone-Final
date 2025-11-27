@@ -202,8 +202,11 @@
 }
 
 /* Transaction Section */
-.transaction-history-wrapper {
+.transaction-history-wrapper,
+.activity-logs-wrapper
+{
     margin-top: 2rem;
+    margin-left: 2rem;
     display: flex;
     justify-content: center;
     padding: 2rem;
@@ -256,3 +259,5 @@
     font-weight: 600;
     color: var(--primary, #0f0853);
 }
+
+

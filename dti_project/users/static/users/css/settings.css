@@ -242,3 +242,9 @@
 .activity-table th { background:#f7f9fb; font-weight:600; font-size:0.9rem; }
 .by-cell { white-space:nowrap; width:180px; }
 .role-cell { white-space:nowrap; width:140px; color:#555; font-size:0.9rem; }
+
+.logs-header {
+    margin-bottom: 0.25rem;
+    color: var(--primary, #0f0853);
+    padding-left: 2rem;
+}   

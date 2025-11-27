@@ -1,5 +1,6 @@
 {% extends "dashboard/layout.html" %}
 {% load static %}
+{% load custom_filters %}
 
 {% block title %}Settings - {{ user.get_full_name }}{% endblock %}
 
@@ -83,7 +84,7 @@
                                     </td>
                                     <td class="role-cell">
                                         {% if log.role %}
-                                            {{ log.role }}
+                                            {{ log.role|titlecase }}
                                         {% elif log.user %}
                                             {{ log.user.get_role_display }}
                                         {% else %}

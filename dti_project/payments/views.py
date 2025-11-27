@@ -19,7 +19,8 @@ from reportlab.lib.pagesizes import A4
 from notifications.models import Notification
 from django.contrib.contenttypes.models import ContentType
 from documents.models import SalesPromotionPermitApplication, OrderOfPayment, ServiceRepairAccreditationApplication
-
+from documents.models.collection_models import CollectionReport, CollectionReportItem
+from django.utils import timezone
 
 def _get_doc_objects(doc_type, pk):
     """
@@ -155,8 +156,7 @@ def payment_success(request, doc_type, pk):
             object_id=display_id,
         )
         send_user_notification(admin.id, notification)
-
-    notification = Notification.objects.create(
+        notification = Notification.objects.create(
         user=owner,
         sender=request.user,
         message=f"Your payment for {ctx['display_name']} #{display_id} was successful and is now pending verification.",
@@ -174,55 +174,105 @@ def payment_failed(request):
 
 @login_required
 def verify_payment(request, doc_type, pk):
+    """
+    Verify payment for both OOP and Service Repair.
+    Creates CollectionReportItem only if reference_code exists.
+    """
+
     try:
         ctx = _get_doc_objects(doc_type, pk)
     except ValueError:
         messages.error(request, "Invalid target for verification.")
         return redirect('documents-list')
 
+    # Permission check
     if request.user.role not in ["admin", "collection_agent"]:
         messages.error(request, "You do not have permission to verify payments.")
         return redirect('documents-list')
 
+    # Get or create today's collection report
+    today = timezone.now().date()
+    report, _ = CollectionReport.objects.get_or_create(
+        report_collection_date=today,
+        defaults={"dti_office": "DTI Office"}
+    )
+
+    # ----------------------------------------------------------
+    # OOP / Sales Promotion
+    # ----------------------------------------------------------
     if ctx["type"] == "oop":
         oop = ctx["oop"]
-        if oop.payment_status == OrderOfPayment.PaymentStatus.PAID:
-            oop.payment_status = OrderOfPayment.PaymentStatus.VERIFIED
-            oop.save()
-            target_user = ctx["user"]
-            notification = Notification.objects.create(
-                user=target_user,
-                sender=request.user,
-                message=f"Your payment for OOP #{oop.pk} has been verified! You can now download your official receipt.",
-                type="approved",
-                content_type=ContentType.objects.get_for_model(oop),
-                object_id=oop.pk,
-            )
-            send_user_notification(target_user.id, notification)
-        else:
+
+        if oop.payment_status != OrderOfPayment.PaymentStatus.PAID:
             messages.warning(request, "Payment must be marked as 'Paid' before verifying.")
+            return redirect('documents-list')
+
+        # Mark as VERIFIED
+        oop.payment_status = OrderOfPayment.PaymentStatus.VERIFIED
+        oop.save()
+
+        # Only create CollectionReportItem if reference_code exists
+        if oop.reference_code:
+            item = CollectionReportItem.objects.create(
+                number=oop.reference_code,           # matches receipt
+                payor=ctx["user"].get_full_name(),
+                particulars="Sales Promotion Permit",
+                amount=ctx["total_amount"],
+                stamp_tax=ctx["doc_stamp_fee"] or 0,
+            )
+            report.report_items.add(item)
+            report.save()
+
+        target_obj = oop
+        target_user = ctx["user"]
+        notification_msg = f"Your payment for OOP #{oop.pk} has been verified! You can now download your official receipt."
+
+    # ----------------------------------------------------------
+    # Service Repair Accreditation
+    # ----------------------------------------------------------
     else:
         sra = ctx["sra"]
-        if sra.payment_status == ServiceRepairAccreditationApplication.PaymentStatus.PAID:
-            sra.payment_status = ServiceRepairAccreditationApplication.PaymentStatus.VERIFIED
-            if not sra.reference_code:
-                sra.reference_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=15))
-                sra.acknowledgment_generated_at = timezone.now()
-            sra.save()
-            target_user = ctx["user"]
-            notification = Notification.objects.create(
-                user=target_user,
-                sender=request.user,
-                message=f"Your payment for Service Repair Accreditation #{sra.pk} has been verified! You can now download your official receipt.",
-                type="approved",
-                content_type=ContentType.objects.get_for_model(sra),
-                object_id=sra.pk,
-            )
-            send_user_notification(target_user.id, notification)
-        else:
-            messages.warning(request, "Payment must be marked as 'Paid' before verifying.")
 
+        if sra.payment_status != ServiceRepairAccreditationApplication.PaymentStatus.PAID:
+            messages.warning(request, "Payment must be marked as 'Paid' before verifying.")
+            return redirect('documents-list')
+
+        # Mark as VERIFIED
+        sra.payment_status = ServiceRepairAccreditationApplication.PaymentStatus.VERIFIED
+        sra.save()
+
+        # Only create CollectionReportItem if reference_code exists
+        if sra.reference_code:
+            item = CollectionReportItem.objects.create(
+                number=sra.reference_code,           # matches receipt
+                payor=ctx["user"].get_full_name(),
+                particulars="Service Repair Accreditation",
+                amount=ctx["total_amount"],
+                stamp_tax=0,
+            )
+            report.report_items.add(item)
+            report.save()
+
+        target_obj = sra
+        target_user = ctx["user"]
+        notification_msg = f"Your payment for Service Repair Accreditation #{sra.pk} has been verified! You can now download your official receipt."
+
+    # ----------------------------------------------------------
+    # Send notification to the owner
+    # ----------------------------------------------------------
+    notification = Notification.objects.create(
+        user=target_user,
+        sender=request.user,
+        message=notification_msg,
+        type="approved",
+        content_type=ContentType.objects.get_for_model(target_obj),
+        object_id=target_obj.pk,
+    )
+    send_user_notification(target_user.id, notification)
+
+    messages.success(request, "Payment verified successfully and added to collection report.")
     return redirect('all-documents')
+
 
 @login_required
 def download_receipt(request, doc_type, pk):
@@ -262,7 +312,7 @@ def download_receipt(request, doc_type, pk):
         # AMOUNTS
         y = height - 235
         p.setFont("Helvetica-Bold", 10)
-        p.drawString(50, y, "Fee Description")
+        p.drawString(50, y, "Fee Descriptionasdasd")
         p.drawString(300, y, "Amount (₱)")
         p.line(50, y - 2, 550, y - 2)
 
